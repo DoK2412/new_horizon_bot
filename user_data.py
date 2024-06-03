@@ -3,40 +3,27 @@
 class User:
     user = dict()
 
-    def __init__(self, telegram_id, tag, name, surname):
+    def __init__(self, chat_id):
 
-        self.telegram_id: str = telegram_id
-        self.telegram_tag: str = tag
-        self.user_name: str = name
-        self.surname: str = surname
-        self.user_id_db: int = None
-        self.rights: bool = None
-        self.user_id_rights: int = None
-        self.day = None
-        self.job = None
-        self.calendar = None
-        self.bloc_day = False
-        self.adding_order = False
+        self.telegram_id = chat_id
+        self.user_id = None
+        self.date = None
         self.time = None
         self.number = None
-        self.transfer = False
-        self.order_id_transfer = None
-        self.id_application_refusal = None
-        self.transfer_date = False
-        self.id_transfer_request = None
-        self.day_one_statistics = None
-        self.day_two_statistics = None
-        self.statistics_one = False
-        self.statistics_two = False
+        self.order_id = None
+        self.statistics_start_date = None
+        self.statistics_end_date = None
+        self.user_rights_id = None
+
 
     @classmethod
-    def get_user(cls, telegram_id, tag, name, surname):
-        if telegram_id in cls.user.keys():
-            return cls.user[telegram_id]
+    def get_user(cls, chat_id):
+        if chat_id in cls.user.keys():
+            return cls.user[chat_id]
         else:
-            return cls.add_user(telegram_id, tag, name, surname)
+            return cls.add_user(chat_id)
 
     @classmethod
-    def add_user(cls, telegram_id, tag, name, surname):
-        cls.user[telegram_id] = User(telegram_id, tag, name, surname)
-        return cls.user[telegram_id]
+    def add_user(cls, chat_id):
+        cls.user[chat_id] = User(chat_id)
+        return cls.user[chat_id]

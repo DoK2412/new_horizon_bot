@@ -1,7 +1,7 @@
-pyTelegramBotAPI==4.16.1
-pydantic==1.10.14
-loguru==0.7.2
-sqlmodel==0.0.8
-psycopg2-binary==2.9.7
-python-telegram-bot-calendar==1.0.5
-
+aiogram==3.6.0
+asyncio==3.4.3
+sqlmodel==0.0.18
+psycopg2-binary==2.9.9
+aiogram_dialog==2.1.0
+aiogram-calendar==0.5.0
+requests==2.31.0

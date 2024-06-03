@@ -2,17 +2,43 @@ import datetime
 import requests
 import re
 
-
 from sqlmodel import Session, select
 
 from database.connection_db import engin
 from database.sql_requests import Users, Orders, Calendar
-from servise.calendar import get_year, get_year_all
-from setting import list_time
 
-from telebot import types
-from setting import bot_token, list_commands_user, list_commands_admin
+from setting import bot_token
 
+from aiogram_calendar import SimpleCalendar
+from servise.state import Form
+from aiogram.types import ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
+
+
+async def get_calendar(callback, min_date, max_date):
+    calendar = SimpleCalendar(locale='ru_RU.utf8', show_alerts=True)
+    calendar.set_dates_range(datetime.datetime.strptime(str(min_date), '%Y-%m-%d'),
+                             datetime.datetime.strptime(str(max_date), '%Y-%m-%d'))
+    return calendar
+
+
+async def start_calendar(callback):
+    min_date = datetime.date.today()
+    max_date = "{:%Y-%m-%d}".format(datetime.datetime.strptime('31.12.2030', '%d.%m.%Y'))
+    await callback.message.answer('Укажите дату: ',
+                                       reply_markup=await (
+                                           await get_calendar(callback, min_date, max_date)).start_calendar())
+
+
+async def ending_calendar(callback, callback_data):
+    min_date = datetime.date.today()
+    max_date = "{:%Y-%m-%d}".format(datetime.datetime.strptime('31.12.2030', '%d.%m.%Y'))
+    calendar = await get_calendar(callback, min_date, max_date)
+    selected, date = await calendar.process_selection(callback, callback_data)
+    if selected and date:
+        await callback.message.delete()
+        date_list = [date.strftime('%d'), date.strftime('%m'), date.strftime('%Y')]
+        date = f'{date_list[0]}.{date_list[1]}.{date_list[2]}'
+        return date
 
 
 def publicity(id, job, date, number_phone, new_date=None, time=None, new_time=None, cancellation=False, add=False, transfer=False):
@@ -30,18 +56,18 @@ def publicity(id, job, date, number_phone, new_date=None, time=None, new_time=No
     if transfer:
         messeg = f'Заказчик перенёс заявку.\n\nСведения о заявке:\n\nПеренесено с {date}, {time} на {new_date} {new_time},\nНеобходимая работа: {job},\nНомер заказчика: {str(number_phone)}'
 
-
     for i_id in id_admin:
         url = f"https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={i_id}&text={messeg}"
         requests.get(url).json()
 
 
 class WorcUser(object):
-    def __init__(self, user):
+    def __init__(self, callback=None, message=None, user=None):
+        self.callback = callback
+        self.message = message
         self.user = user
 
-    def check_user(self):
-
+    async def check_user(self):
         with (Session(engin) as session):
             user_view = session.exec(
                 select(Users).where(Users.telegram_id == self.user.telegram_id)).first()
@@ -54,15 +80,15 @@ class WorcUser(object):
                 self.user.user_id_db = user_view.id
                 self.user.rights = user_view.rights
 
-    def authorization(self):
+    async def authorization(self):
         date = datetime.datetime.now()
         with Session(engin) as session:
-            add_useer = Users(telegram_id=self.user.telegram_id,
-                              telegram_teg=self.user.telegram_tag,
-                              registration_date=str(date),
+            add_useer = Users(telegram_id=self.callback.from_user.id,
+                              telegram_teg=self.callback.from_user.username,
+                              registration_date=date,
                               rights='user',
-                              user_name=self.user.user_name,
-                              surname=self.user.surname)
+                              user_name=self.callback.from_user.first_name,
+                              surname=self.callback.from_user.last_name)
             session.add(add_useer)
             session.commit()
             return True
@@ -70,121 +96,17 @@ class WorcUser(object):
 
 class AdminPanel(object):
 
-    bot = None
-    user = None
-    message = None
-    def __init__(self, user, bot, message):
-        self.user = user
-        self.bot = bot
+    def __init__(self, user= None, callback= None, message= None):
+        self.callback = callback
         self.message = message
+        self.user = user
 
-    def replacement_rights(self):
-        AdminPanel.bot = self.bot
-        AdminPanel.user = self.user
-        AdminPanel.message = self.message
-
-        with (Session(engin) as session):
-            user_view = session.exec(
-                select(Users)).all()
-            self.bot.send_message(self.message.chat.id, "Выберите и введите id пользователя и укажите права (admin/user) через пробел")
-
-            for user in user_view:
-                self.bot.send_message(self.message.chat.id, f"id: {user.id},\nИмя: {user.user_name},\nФамилия: {user.surname}, \nПрава: {user.rights}.")
-            self.bot.register_next_step_handler(self.message, AdminPanel.update_rights)
-
-    def update_rights(self):
-        if self.text in list_commands_admin:
-            AdminPanel.redirection(self)
-        else:
-            data_us = self.text.split()
-            if len(data_us) < 2 or data_us[1] not in ['admin', 'user']:
-                AdminPanel.bot.send_message(self.from_user.id,
-                                            "Указаны неверные права.\nПовторите ввод.")
-                AdminPanel.bot.register_next_step_handler(AdminPanel.message, AdminPanel.update_rights)
-            else:
-                with Session(engin) as session:
-                    user_view = session.exec(
-                        select(Users).where(Users.id == data_us[0])).one()
-                    if user_view.telegram_id == self.from_user.id:
-                        AdminPanel.bot.send_message(self.from_user.id,
-                                                    "Вы не можете изменить права себе.")
-                        AdminPanel.bot.register_next_step_handler(AdminPanel.message, AdminPanel.update_rights)
-                    else:
-                        user_view.rights = data_us[1]
-                        session.add(user_view)
-                        session.commit()
-                        session.refresh(user_view)
-                        AdminPanel.bot.send_message(self.from_user.id,
-                                              "Права изменены.")
-
-    def change_number_orders(self, date=None, month=True):
-        """изменение количества заказов в день"""
-        AdminPanel.bot = self.bot
-        AdminPanel.user = self.user
-        AdminPanel.message = self.message
-        if month:
-            get_year(self.bot, self.message)
-        if date:
-            self.user.day = date.strftime("%d.%m.%Y")
-            self.bot.send_message(self.message.from_user.id, f"Введите количество услуг на {self.user.day}")
-            self.bot.register_next_step_handler(self.message.message, AdminPanel.save_orders)
-
-    def save_orders(self):
-
-        with Session(engin) as session:
-            day = session.exec(select(Calendar).where(Calendar.day == AdminPanel.user.day)).one()
-            quantity_order = day.quantity_order
-            day.quantity_order = str(self.text)
-            session.add(day)
-            session.commit()
-            session.refresh(day)
-        AdminPanel.bot.send_message(self.from_user.id,
-                                          f"Количество заказов на {AdminPanel.user.day} изменено c {quantity_order} на {day.quantity_order} .")
-
-    def bloc_day(self, date=None):
-        """блокировка дня"""
-        if date:
-            days = date.strftime("%d.%m.%Y")
-            with Session(engin) as session:
-                day = session.exec(select(Calendar).where(Calendar.day == days)).one()
-                day.actively = False
-                session.add(day)
-                session.commit()
-                session.refresh(day)
-
-            AdminPanel.bot.send_message(self.message.from_user.id,
-                                              f"День {days} заблокирован.")
-
-    def unblocking_day(self):
-        with Session(engin) as session:
-            day = session.exec(select(Calendar).where(Calendar.actively == False)).all()
-            if len(day) == 0:
-                self.bot.send_message(self.message.from_user.id, "У вас нет заблокированных дней.")
-            else:
-                markup = types.InlineKeyboardMarkup()
-                self.user.bloc_day = True
-                for i in day:
-                    markup.add(types.InlineKeyboardButton(text=i.day,
-                                                          callback_data=i.day))
-
-                self.bot.send_message(self.message.from_user.id, "Выберите дату из списка заблокированных:", reply_markup=markup)
-
-    def completion_unblocking_day(self, days):
-        with Session(engin) as session:
-            day = session.exec(select(Calendar).where(Calendar.day == days)).one()
-            day.actively = True
-            session.add(day)
-            session.commit()
-            session.refresh(day)
-        self.bot.send_message(self.message.from_user.id,
-                                    f"День {days} разблокирован.\nЗаказов на день {day.quantity_order}")
-
-
-    def viewing_applications(self):
+    async def viewing_applications(self):
+        """Получение всех заявок от пользователя"""
         with Session(engin) as session:
             orders = session.exec(select(Orders).where(Orders.active == True)).all()
         if len(orders) == 0:
-            self.bot.send_message(self.message.from_user.id, "Нет активных заявок.")
+            await self.callback.message.answer("Нет активных заявок.")
         else:
             dict_orders = dict()
             for order in orders:
@@ -197,423 +119,569 @@ class AdminPanel(object):
 
             for key_order, values_order in dict_orders.items():
                 values_order.sort(key=lambda x: x[0])
-                self.bot.send_message(self.message.from_user.id, f"~~===Заявки на {key_order}===~~")
+                await self.callback.message.answer(f"~~===Заявки на {key_order}===~~")
                 for i in values_order:
-                    self.bot.send_message(self.message.from_user.id, f"Заявка №: {i[0]},\nВид работ: {i[2]},\nВремя: {i[1]}\nНомер заказчика: {i[3]}.")
+                    await self.callback.message.answer(f"Заявка №: {i[0]},\nВид работ: {i[2]},\nВремя: {i[1]}\nНомер заказчика: {i[3]}.")
 
-    def fulfillment_request(self):
-        AdminPanel.bot = self.bot
-        AdminPanel.user = self.user
-        AdminPanel.message = self.message
+    async def change_number_orders(self, state):
+        """отправляем календарь пользователю"""
+        await state.set_state(Form.calendar_3)
+        await start_calendar(self.callback)
 
-        self.bot.send_message(self.message.from_user.id, f"Введите номер выполненной заявки и стоимость выполнения через пробел.")
-        AdminPanel(self.user, self.bot, self.message).viewing_applications()
-        self.bot.register_next_step_handler(self.message, AdminPanel.closing_application)
+    async def date_changing_applications(self, callback_data, state):
+        """Получения даты для смены количества заявок"""
+        date = await ending_calendar(self.callback, callback_data)
+        if date:
+            self.user.date = date
+            await state.clear()
 
-    def closing_application(self):
-        if self.text in list_commands_admin:
-            AdminPanel.redirection(self)
-        else:
-            date = datetime.date.today()
-            order_data = self.text.split()
+            await state.set_state(Form.number_applications)
+            await self.callback.message.answer(
+                "Введите количество заявок на день.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+
+    async def creating_quantity_database(self, state):
+        """Запись в базу данных изменения количества заявок на день"""
+        with Session(engin) as session:
+            day = session.exec(select(Calendar).where(Calendar.day == self.user.date)).one()
+            quantity_order = day.quantity_order
+            day.quantity_order = str(self.message.text)
+            session.add(day)
+            session.commit()
+            session.refresh(day)
+        await state.clear()
+        await self.message.answer(f"Количество заказов на {self.user.date} изменено c {quantity_order} на {self.message.text} .")
+
+    async def statistics_calendar_first(self, state):
+        """начало получеия первой даты статистики"""
+        await state.set_state(Form.calendar_4)
+        await start_calendar(self.callback)
+
+    async def starting_points(self, callback_data, state):
+        """получение даты начала статистики"""
+        date = await ending_calendar(self.callback, callback_data)
+        if date:
+            date = date.split('.')
+            date = datetime.datetime.strptime(f'{date[2]}{date[1]}{date[0]}', '%Y%m%d').date()
+            self.user.statistics_start_date = date
+            await state.clear()
+            await state.set_state(Form.calendar_5)
+            await AdminPanel(callback=self.callback, user=self.user).statistics_calendar_second(state)
+
+    async def statistics_calendar_second(self, state):
+        """начало получения второй даты статистики"""
+        await state.set_state(Form.calendar_5)
+        await start_calendar(self.callback)
+
+    async def end_points(self, callback_data, state):
+        """Получение даты окончания статистики"""
+        date = await ending_calendar(self.callback, callback_data)
+        if date:
+            date = date.split('.')
+            date = datetime.datetime.strptime(f'{date[2]}{date[1]}{date[0]}', '%Y%m%d').date()
+            self.user.statistics_end_date = date
+            await state.clear()
             with Session(engin) as session:
-                order = session.exec(select(Orders).where(Orders.id == order_data[0])).one()
-                order.active = False
-                if len(order_data) == 2:
-                    order.price = int(order_data[1])
+                order = session.exec(select(Orders).where(Orders.closing_date >= self.user.statistics_start_date, Orders.closing_date <= self.user.statistics_end_date)).all()
+                price = 0
+            for i in order:
+                if isinstance(i.price, int):
+                    price += i.price
                 else:
-                    order.price = 0
-                order.closing_date = date
-                session.add(order)
-                session.commit()
-                session.refresh(order)
-                id_user = session.exec(select(Users.telegram_id).where(Users.id == order.user_id)).one()
+                    price += 0
+            await self.callback.message.answer(f"В период с {self.user.statistics_start_date} до {self.user.statistics_end_date} заработано: {price}")
 
-                messeg = f'Мастер перевел Ваш заказ № {order.id} - "{order.job}" в статус исполнено.'
-                url = f"https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={id_user}&text={messeg}"
-                requests.get(url).json()
-
-                AdminPanel.bot.send_message(AdminPanel.message.from_user.id, f"Заявка № {order.id} переведена в статус исполнена.")
-
-    def cancellation_application(self):
-
-        AdminPanel.bot = self.bot
-        AdminPanel.user = self.user
-        AdminPanel.message = self.message
-
-        self.bot.send_message(self.message.from_user.id,
-                              f"Введите номер Завки которую хотите отменить.")
-        AdminPanel(self.user, self.bot, self.message).viewing_applications()
-        self.bot.register_next_step_handler(self.message, AdminPanel.obtaining_reason_refusal)
-
-
-    def obtaining_reason_refusal(self):
-        if self.text in list_commands_admin:
-            AdminPanel.redirection(self)
+    async def cancellation_application(self, state):
+        with Session(engin) as session:
+            orders = session.exec(select(Orders).where(Orders.active == True)).all()
+        if len(orders) == 0:
+            await self.callback.message.answer("Нет активных заявок.")
         else:
-            AdminPanel.user.id_application_refusal = self.text
-            AdminPanel.bot.send_message(AdminPanel.message.from_user.id,
-                                  f"Введите причину отказа от заявки.")
-            AdminPanel.bot.register_next_step_handler(AdminPanel.message, AdminPanel.completion_failure)
+            dict_orders = dict()
+            for order in orders:
+                if order.order_date in dict_orders:
+                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.number_phone])
+                else:
+                    dict_orders[order.order_date] = list()
+                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.number_phone])
+            dict_orders = dict(sorted(dict_orders.items()))
 
-    def completion_failure(self):
-        if self.text in list_commands_admin:
-            AdminPanel.redirection(self)
-        else:
-            with Session(engin) as session:
-                order = session.exec(select(Orders).where(Orders.id == AdminPanel.user.id_application_refusal)).one()
-                order.active = False
-                order.refusal = True
-                order.rejection_reason = self.text
-                session.add(order)
-                session.commit()
-                session.refresh(order)
-                id_user = session.exec(select(Users.telegram_id).where(Users.id == order.user_id)).one()
+            for key_order, values_order in dict_orders.items():
+                values_order.sort(key=lambda x: x[0])
+                await self.callback.message.answer(f"~~===Заявки на {key_order}===~~")
+                for i in values_order:
+                    await self.callback.message.answer(f"Заявка №: {i[0]},\nВид работ: {i[2]},\nВремя: {i[1]}\nНомер заказчика: {i[3]}.")
+            await state.set_state(Form.cancellation_application)
+            await self.callback.message.answer(
+                "Введите номер заявки для отмены.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
 
-                messeg = f'Мастер отменил Ваш заказ № {order.id} - "{order.job}".\nПричина отказа: {self.text}'
-                url = f"https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={id_user}&text={messeg}"
-                requests.get(url).json()
+    async def reason_cancellation(self, state):
+        await state.clear()
+        self.user.order_id = self.message.text
+        await state.set_state(Form.reason_cancellation)
+        await self.message.answer("Введите причину отмены заказа")
 
-                AdminPanel.bot.send_message(AdminPanel.message.from_user.id,
-                                            f"Заявка № {order.id} отменена.")
-
-    def transfer_application(self):
-        AdminPanel.bot = self.bot
-        AdminPanel.user = self.user
-        AdminPanel.message = self.message
-
-        self.bot.send_message(self.message.from_user.id,
-                              f"Введите номер заявки которую хотите перенести.")
-        AdminPanel(self.user, self.bot, self.message).viewing_applications()
-        self.bot.register_next_step_handler(self.message, AdminPanel.transfer_date)
-
-    def transfer_date(self, month=True, date=None):
-        if month:
-            AdminPanel.user.transfer_date = True
-            AdminPanel.user.id_transfer_request = self.text
-            get_year(AdminPanel.bot, AdminPanel.message)
-        if date:
-            AdminPanel.user.day = date.strftime("%d.%m.%Y")
-            with Session(engin) as session:
-                day = session.exec(select(Calendar).where(Calendar.day == AdminPanel.user.day)).one()
-                order = session.exec(select(Orders).where(Orders.order_date == AdminPanel.user.day, Orders.active == True)).all()
-                if day.quantity_order <= len(order):
-                    self.bot.send_message(self.message.from_user.id, "К сожалению на этот день нет свободных мест.")
-                elif len(order) == 0:
-                    markup = types.InlineKeyboardMarkup()
-
-                    for time in list_time:
-                        markup.add(types.InlineKeyboardButton(text=time,
-                                                              callback_data=time))
-                    self.bot.send_message(self.message.from_user.id,
-                                          "Выберите доапазон времени:\nВремя возможно скореектировать с мастером в зависимости от загруженности.",
-                                          reply_markup=markup)
-                elif len(order) > 0 and len(order) < day.quantity_order:
-                    for i_order in order:
-                        if i_order.time in list_time:
-                            list_time.remove(i_order.time)
-                            continue
-                    markup = types.InlineKeyboardMarkup()
-                    for time in list_time:
-                        markup.add(types.InlineKeyboardButton(text=time,
-                                                              callback_data=time))
-
-                    self.bot.send_message(self.message.from_user.id,
-                                          "Выберите доапазон времени:\nВремя возможно скореектировать с мастером в зависимости от загруженности.",
-                                          reply_markup=markup)
-
-    def completion_transfer(self):
-        if self.text in list_commands_user:
-            UserPanel.redirection(self)
-        else:
-            with Session(engin) as session:
-                order = session.exec(select(Orders).where(Orders.id == AdminPanel.user.id_transfer_request)).one()
-                date = order.order_date
-                time = order.time
-                order.order_date = AdminPanel.user.day
-                order.time = AdminPanel.user.time
-
-
-
-                session.add(order)
-                session.commit()
-                session.refresh(order)
-                id_user = session.exec(select(Users.telegram_id).where(Users.id == order.user_id)).one()
-
-                messeg = f'Мастер изменил сроки исполнения заказа № {order.id} - {order.job}.\nДата изменена с {date} на {order.order_date},\n Время изменено с {time} на {order.time}'
-                url = f"https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={id_user}&text={messeg}"
-                requests.get(url).json()
-
-                AdminPanel.bot.send_message(AdminPanel.message.from_user.id,
-                                            f"Заявка № {order.id} перенесена.")
-
-    def first_day_statistics(self, month=True, date=None):
-        AdminPanel.bot = self.bot
-        AdminPanel.user = self.user
-        AdminPanel.message = self.message
-        if month:
-            self.user.statistics_one = True
-            self.bot.send_message(self.message.from_user.id, "Введите дату начала выборки.")
-            get_year_all(self.bot, self.message)
-        if date:
-            self.bot.delete_message(self.message.from_user.id, self.message.message.message_id)
-            self.user.day_one_statistics = date
-            AdminPanel.two_day_statistics(self, month=True,  date=None)
-
-    def two_day_statistics(self, month=True, date=None):
-        if month:
-            self.bot.send_message(self.message.from_user.id, "Введите дату окончания выборки.")
-            self.user.statistics_two = True
-            get_year_all(self.bot, self.message, calendar_id=2)
-        if date:
-            self.user.day_two_statistics = date
-            AdminPanel.display_statistics(self)
-
-    def display_statistics(self):
+    async def entry_cancellatio_database(self, state):
+        await state.clear()
 
         with Session(engin) as session:
-            order = session.exec(select(Orders).where(Orders.closing_date >= self.user.day_one_statistics, Orders.closing_date <= self.user.day_two_statistics)).all()
-            price = 0
-        for i in order:
-            if isinstance(i.price, int):
-                price += i.price
-            else:
-                price += 0
-        self.bot.send_message(self.message.from_user.id, f"В период с {self.user.day_one_statistics} до {self.user.day_two_statistics} заработано: {price}")
+            order = session.exec(select(Orders).where(Orders.id == self.user.order_id)).one()
+            order.active = False
+            order.refusal = True
+            order.rejection_reason = self.message.text
+            session.add(order)
+            session.commit()
+            session.refresh(order)
+            id_user = session.exec(select(Users.telegram_id).where(Users.id == order.user_id)).one()
 
-    def redirection(self):
+            messeg = f'Мастер отменил Ваш заказ № {order.id} - "{order.job}".\nПричина отказа: {self.message.text}'
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={id_user}&text={messeg}"
+            requests.get(url).json()
 
-        if self.text == 'Изменить права':
-            AdminPanel(AdminPanel.user, AdminPanel.bot, AdminPanel.message).replacement_rights()
-        elif self.text == 'Изменить количество заявок':
-            AdminPanel.user.calendar = 1
-            AdminPanel(AdminPanel.user, AdminPanel.bot, AdminPanel.message).change_number_orders()
-        elif self.text == 'Блокировка дня':
-            AdminPanel.user.calendar = 2
-            AdminPanel(AdminPanel.user, AdminPanel.bot, AdminPanel.message).change_number_orders()
-        elif self.text == 'Разблокировка дня':
-            AdminPanel(AdminPanel.user, AdminPanel.bot, AdminPanel.message).unblocking_day()
-        elif self.text == 'Просмотр заявок':
-            AdminPanel(AdminPanel.user, AdminPanel.bot, AdminPanel.message).viewing_applications()
-        elif self.text == 'Отметить заявку как выполненную':
-            AdminPanel(AdminPanel.user, AdminPanel.bot, AdminPanel.message).fulfillment_request()
-        elif self.text == 'Отменить заявку':
-            AdminPanel(AdminPanel.user, AdminPanel.bot, AdminPanel.message).cancellation_application()
-        elif self.text == 'Перенос заявки':
-            AdminPanel(AdminPanel.user, AdminPanel.bot, AdminPanel.message).transfer_application()
-        elif self.text == 'Статистика работ':
-            AdminPanel(AdminPanel.user, AdminPanel.bot, AdminPanel.message).first_day_statistics()
+            await self.message.answer(f"Заявка № {order.id} отменена.")
 
-class UserPanel(object):
+    async def blocking(self, state):
+        """выбор дня для блокировки"""
+        await state.set_state(Form.calendar_6)
+        await start_calendar(self.callback)
 
-    bot = None
-    user = None
-    message = None
-    check = 0
-    def __init__(self, user, bot, message):
-        self.user = user
-        self.bot = bot
-        self.message = message
-
-
-    def date_applications(self, date=None, month=True):
-        """запись услуги"""
-        if month:
-            get_year(self.bot, self.message)
-
-    def add_order(self, date=None):
+    async def end_blocking(self, callback_data, state):
+        await state.clear()
+        date = await ending_calendar(self.callback, callback_data)
         if date:
-
-            UserPanel.bot = self.bot
-            UserPanel.user = self.user
-            UserPanel.message = self.message
-
-            self.bot.delete_message(self.message.from_user.id, self.message.message.message_id)
-
-            self.user.day = date.strftime("%d.%m.%Y")
-            self.user.adding_order = True
             with Session(engin) as session:
-                time_user = list_time.copy()
-                day = session.exec(select(Calendar).where(Calendar.day == self.user.day)).one()
-                order = session.exec(select(Orders).where(Orders.order_date == self.user.day, Orders.active == True)).all()
-                if day.quantity_order <= len(order):
-                    self.bot.send_message(self.message.from_user.id, "К сожалению на этот день нет свободных мест.")
-                elif len(order) == 0:
-                    markup = types.InlineKeyboardMarkup()
+                day = session.exec(select(Calendar).where(Calendar.day == date)).one()
+                day.actively = False
+                session.add(day)
+                session.commit()
+                session.refresh(day)
+            await self.callback.message.answer(f"День {date} заблокирован.")
 
-                    for time in list_time:
-                        markup.add(types.InlineKeyboardButton(text=time,
-                                                              callback_data=time))
-                    self.bot.send_message(self.message.from_user.id, "Выберите доапазон времени:\nВремя возможно скореектировать с мастером в зависимости от загруженности.",
-                                          reply_markup=markup)
+    async def unlock(self):
+        with Session(engin) as session:
+            day = session.exec(select(Calendar).where(Calendar.actively == False)).all()
+            if len(day) == 0:
+                await self.callback.message.answer("У вас нет заблокированных дней.")
+            else:
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+                for i_day in day:
+                    keyboard.inline_keyboard.append([
+                        InlineKeyboardButton(text=i_day.day,
+                                             callback_data=f'Разблокировка {i_day.day}')
+                    ])
+                await self.callback.message.answer(
+                    "Выберите диапазон времени",
+                    reply_markup=keyboard,
+                )
+
+    async def adding_database(self):
+        """разблокировка дня в базе"""
+        with Session(engin) as session:
+            day = session.exec(select(Calendar).where(Calendar.day == self.callback.data[14:])).one()
+            day.actively = True
+            session.add(day)
+            session.commit()
+            session.refresh(day)
+        await self.callback.message.answer(f"День {self.callback.data[14:]} разблокирован.\nЗаказов на день {day.quantity_order}")
+
+    async def change_rights(self, state):
+        """вавод пользователей бота"""
+        await state.set_state(Form.user_rights_id)
+        with (Session(engin) as session):
+            user_view = session.exec(
+                select(Users)).all()
+            await self.callback.message.answer("Выберите и введите id пользователя")
+
+            for user in user_view:
+                await self.callback.message.answer(f"id: {user.id},\nИмя: {user.user_name},\nФамилия: {user.surname}, \nПрава: {user.rights}.")
+
+    async def rights_request(self, state):
+        await state.clear()
+        await state.set_state(Form.user_rights)
+        self.user.user_rights_id = self.message.text
+        await self.message.answer("Введите права пользователя user/admin")
+
+    async def changing_rights_database(self, state):
+        await state.clear()
+        if self.message.text in ['admin', 'user']:
+            with Session(engin) as session:
+                user_view = session.exec(
+                    select(Users).where(Users.id == self.user.user_rights_id)).one()
+                if user_view.id == self.user.user_id_db:
+                    await self.message.answer("Вы не можете изменить права себе.")
+                else:
+                    user_view.rights = self.message.text
+                    session.add(user_view)
+                    session.commit()
+                    session.refresh(user_view)
+                    await self.message.answer("Права изменены.")
+        else:
+            await self.message.answer("Вы ввели не верные права, повторите ввод")
+            await AdminPanel(message=self.message, user=self.user).changing_rights_database(state)
+
+    async def transfer_of_application(self, state):
+        with Session(engin) as session:
+            orders = session.exec(select(Orders).where(Orders.active == True)).all()
+        if len(orders) == 0:
+            await self.callback.message.answer("Нет активных заявок.")
+        else:
+            dict_orders = dict()
+            for order in orders:
+                if order.order_date in dict_orders:
+                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.number_phone])
+                else:
+                    dict_orders[order.order_date] = list()
+                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.number_phone])
+            dict_orders = dict(sorted(dict_orders.items()))
+
+            for key_order, values_order in dict_orders.items():
+                values_order.sort(key=lambda x: x[0])
+                await self.callback.message.answer(f"~~===Заявки на {key_order}===~~")
+                for i in values_order:
+                    await self.callback.message.answer(
+                        f"Заявка №: {i[0]},\nВид работ: {i[2]},\nВремя: {i[1]}\nНомер заказчика: {i[3]}.")
+            await AdminPanel(callback=self.callback, user=self.user).date_transfer(state)
+
+    async def date_transfer(self, state):
+        """выбор дня для переноса"""
+        await state.set_state(Form.calendar_7)
+        await start_calendar(self.callback)
+
+    async def time_application(self, callback_data, state):
+        await state.clear()
+        date = await ending_calendar(self.callback, callback_data)
+        if date:
+            self.user.date = date
+            time_user = ['09:00-10:00', '10:30-11:30', '12:00-13:00', '13:30-14:30', '15:00-16:00', '16:30-17:30',
+                         '18:00-19:00']
+
+            with Session(engin) as session:
+                day = session.exec(select(Calendar).where(Calendar.day == self.user.date)).one()
+                order = session.exec(
+                    select(Orders).where(Orders.order_date == self.user.date, Orders.active == True)).all()
+                if day.quantity_order <= len(order):
+                    await self.callback.message.answer("К сожалению на этот день нет свободных мест.")
+                elif len(order) == 0:
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+                    for time in time_user:
+                        keyboard.inline_keyboard.append([
+                            InlineKeyboardButton(text=time,
+                                                 callback_data=f'Смена {time}')
+                        ])
+                    await self.callback.message.answer(
+                        "Выберите диапазон времени",
+                        reply_markup=keyboard,
+                    )
                 elif len(order) > 0 and len(order) < day.quantity_order:
                     for i_order in order:
                         if i_order.time in time_user:
                             time_user.remove(i_order.time)
                             continue
-                    markup = types.InlineKeyboardMarkup()
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
                     for time in time_user:
-                        markup.add(types.InlineKeyboardButton(text=time,
-                                                              callback_data=time))
+                        keyboard.inline_keyboard.append([
+                            InlineKeyboardButton(text=time,
+                                                 callback_data=f'Смена {time}')
+                        ])
+                    time_user = ['09:00-10:00', '10:30-11:30', '12:00-13:00', '13:30-14:30', '15:00-16:00',
+                                 '16:30-17:30',
+                                 '18:00-19:00']
+                    await self.callback.message.answer(
+                        "Выберите диапазон времени",
+                        reply_markup=keyboard,
+                    )
 
-                    self.bot.send_message(self.message.from_user.id,
-                                          "Выберите доапазон времени:\nВремя возможно скореектировать с мастером в зависимости от загруженности.",
-                                          reply_markup=markup)
-                time_user = ['09:00-10:00', '10:30-11:30', '12:00-13:00', '13:30-14:30', '15:00-16:00', '16:30-17:30',
-                             '18:00-19:00']
+    async def time_receipt(self, state):
+        await state.clear()
+        self.user.time = self.callback.data[6:]
+        await state.set_state(Form.admin_transfer_order)
+        await self.callback.message.answer(
+            "Введите номер заявки необходимую перенести")
 
-    def passing_number_phone(self):
-        UserPanel.bot.send_message(UserPanel.message.from_user.id, "Опишите какую работу необходимо выполнить.")
-        UserPanel.bot.register_next_step_handler(self.message.message, UserPanel.add_number_phone)
-
-    def add_number_phone(self):
-        if self.text in list_commands_user:
-            UserPanel.redirection(self)
-        else:
-            UserPanel.user.job = self.text
-            UserPanel.bot.send_message(UserPanel.message.from_user.id, "Введите Ваш номер телефона для связи с Вами.\nФормат нометра 89996662229")
-            UserPanel.bot.register_next_step_handler(self, UserPanel.description_work)
-
-    def description_work(self):
-        if self.text in list_commands_user:
-            UserPanel.redirection(self)
-        else:
-            if re.match(r'^((8|\+7)[\- ]?)?(\(?\d{3}\)?[\- ]?)?[\d\- ]{7,10}$', self.text) and self.text.isnumeric():
-                date = datetime.datetime.now()
-
-                with Session(engin) as session:
-                    add_useer = Orders(user_id=UserPanel.user.user_id_db,
-                                       creation_date=str(date),
-                                       job=UserPanel.user.job,
-                                       active=True,
-                                       number_phone=self.text,
-                                       refusal=False,
-                                       order_date=UserPanel.user.day,
-                                       time=UserPanel.user.time)
-                    session.add(add_useer)
-                    session.commit()
-
-                publicity(None, self.text, UserPanel.user.day, UserPanel.user.number, time=UserPanel.user.time, add=True)
-                UserPanel.bot.send_message(UserPanel.message.from_user.id, "Заявка принята, мастер свяжется с вами в ближайшее время.")
-            else:
-                UserPanel.bot.send_message(UserPanel.message.from_user.id, "Номер телефона введен не верно.\nПовторите ввод.")
-                UserPanel.add_number_phone(self)
-
-
-    def cancellation_application(self):
-        UserPanel.bot = self.bot
-        UserPanel.user = self.user
-        UserPanel.message = self.message
-
+    async def write_db(self, state):
+        await state.clear()
+        self.user.order_id = self.message.text
         with Session(engin) as session:
-            order = session.exec(select(Orders).where(Orders.user_id == self.user.user_id_db, Orders.active == True)).all()
-            self.bot.send_message(self.message.from_user.id, "Введите номер заявки для отмены ")
-            for i_order in order:
-                self.bot.send_message(self.message.from_user.id, f"Номер заявки: {i_order.id},\nДата: {i_order.order_date},\nНеобходимая работа: {i_order.job}, \nЗаявленное время: {i_order.time}")
-            self.bot.register_next_step_handler(self.message, UserPanel.cancellation_application_db)
-
-
-    def cancellation_application_db(self):
-        if self.text in list_commands_user:
-            UserPanel.redirection(self)
-        else:
-            with Session(engin) as session:
-                cancellation = session.exec(select(Orders).where(Orders.id == self.text)).one()
-                cancellation.active = False
-                session.add(cancellation)
-                session.commit()
-                session.refresh(cancellation)
-                publicity(cancellation.id, cancellation.job, cancellation.order_date, cancellation.number_phone, cancellation=True)
-                UserPanel.bot.send_message(UserPanel.message.from_user.id, "Заявка отменена.")
-
-    def viewing_application(self):
-        with Session(engin) as session:
-            order = session.exec(select(Orders).where(Orders.user_id == self.user.user_id_db, Orders.active == True)).all()
-            if len(order) == 0:
-                self.bot.send_message(self.message.from_user.id, "У вас нет заявок.")
-            else:
-                self.bot.send_message(self.message.from_user.id, "Ваши активнае заявки.")
-                for i_order in order:
-                    self.bot.send_message(self.message.from_user.id, f"Номер заявки: {i_order.id},\nДата: {i_order.order_date},\nНеобходимая работа: {i_order.job}")
-
-    def transfer_application(self):
-        UserPanel.bot = self.bot
-        UserPanel.user = self.user
-        UserPanel.message = self.message
-
-        with Session(engin) as session:
-            order = session.exec(
-                select(Orders).where(Orders.user_id == self.user.user_id_db, Orders.active == True)).all()
-            self.bot.send_message(self.message.from_user.id, "Укажите номер заявки необходимую перенести.")
-            for i_order in order:
-                self.bot.send_message(self.message.from_user.id,
-                                      f"Номер заявки: {i_order.id},\nДата: {i_order.order_date},\nНеобходимая работа: {i_order.job}")
-            self.bot.register_next_step_handler(self.message, UserPanel.new_date)
-
-    def new_date(self):
-        if self.text in list_commands_user:
-            UserPanel.redirection(self)
-        else:
-            UserPanel.user.transfer = True
-            UserPanel.user.user_id_rights = self.text
-            UserPanel(UserPanel.user, UserPanel.bot, UserPanel.message).date_applications()
-
-    def add_new_date(self, date=None):
-        if date:
-            UserPanel.user.day = date.strftime("%d.%m.%Y")
-            with Session(engin) as session:
-                day = session.exec(select(Calendar).where(Calendar.day == UserPanel.user.day)).one()
-                order = session.exec(select(Orders).where(Orders.order_date == UserPanel.user.day, Orders.active == True)).all()
-                if day.quantity_order <= len(order):
-                    self.bot.send_message(self.message.from_user.id, "К сожалению на этот день нет свободных мест.")
-                elif len(order) == 0:
-                    markup = types.InlineKeyboardMarkup()
-
-                    for time in list_time:
-                        markup.add(types.InlineKeyboardButton(text=time,
-                                                              callback_data=time))
-                    self.bot.send_message(self.message.from_user.id,
-                                          "Выберите доапазон времени:\nВремя возможно скореектировать с мастером в зависимости от загруженности.",
-                                          reply_markup=markup)
-                elif len(order) > 0 and len(order) < day.quantity_order:
-                    for i_order in order:
-                        if i_order.time in list_time:
-                            list_time.remove(i_order.time)
-                            continue
-                    markup = types.InlineKeyboardMarkup()
-                    for time in list_time:
-                        markup.add(types.InlineKeyboardButton(text=time,
-                                                              callback_data=time))
-
-                    self.bot.send_message(self.message.from_user.id,
-                                          "Выберите доапазон времени:\nВремя возможно скореектировать с мастером в зависимости от загруженности.",
-                                          reply_markup=markup)
-
-    def completion_transfer(self):
-
-        with Session(engin) as session:
-            order = session.exec(select(Orders).where(Orders.id == UserPanel.user.user_id_rights)).one()
+            order = session.exec(select(Orders).where(Orders.id == self.user.order_id)).one()
             date = order.order_date
             time = order.time
-            order.order_date = UserPanel.user.day
-            order.time = UserPanel.user.time
+            order.order_date = self.user.date
+            order.time = self.user.time
             session.add(order)
             session.commit()
             session.refresh(order)
-            publicity(None, order.job, date, order.number_phone, new_date=UserPanel.user.day, time=time, new_time=UserPanel.user.time,  transfer=True)
-            UserPanel.bot.send_message(UserPanel.message.from_user.id, "Заявка перенесена.")
+            id_user = session.exec(select(Users.telegram_id).where(Users.id == order.user_id)).one()
+
+            messeg = f'Мастер изменил сроки исполнения заказа № {order.id} - {order.job}.\nДата изменена с {date} на {order.order_date},\nВремя изменено с {time} на {order.time}'
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={id_user}&text={messeg}"
+            requests.get(url).json()
+
+            await self.message.answer(f"Заявка № {order.id} перенесена.")
+
+    async def cancel_the_application(self, state):
+        with Session(engin) as session:
+            orders = session.exec(select(Orders).where(Orders.active == True)).all()
+        if len(orders) == 0:
+            await self.callback.message.answer("Нет активных заявок.")
+        else:
+            dict_orders = dict()
+            for order in orders:
+                if order.order_date in dict_orders:
+                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.number_phone])
+                else:
+                    dict_orders[order.order_date] = list()
+                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.number_phone])
+            dict_orders = dict(sorted(dict_orders.items()))
+
+            for key_order, values_order in dict_orders.items():
+                values_order.sort(key=lambda x: x[0])
+                await self.callback.message.answer(f"~~===Заявки на {key_order}===~~")
+                for i in values_order:
+                    await self.callback.message.answer(
+                        f"Заявка №: {i[0]},\nВид работ: {i[2]},\nВремя: {i[1]}\nНомер заказчика: {i[3]}.")
+            await state.set_state(Form.completed_application)
+            await self.callback.message.answer("Введите id выполенной заявки")
+
+    async def receiving_amount(self, state):
+        await state.clear()
+        self.user.order_id = self.message.text
+        await state.set_state(Form.amount)
+        await self.message.answer("Введите суммы полученную за выполнение работ")
+
+    async def entry_the_db_completed_orders(self, state):
+        await state.clear()
+        date = datetime.date.today()
+        with Session(engin) as session:
+            order = session.exec(select(Orders).where(Orders.id == self.user.order_id)).one()
+            order.active = False
+            order.price = self.message.text
+            order.closing_date = date
+            session.add(order)
+            session.commit()
+            session.refresh(order)
+            id_user = session.exec(select(Users.telegram_id).where(Users.id == order.user_id)).one()
+
+            messeg = f'Мастер перевел Ваш заказ № {order.id} - "{order.job}" в статус исполнено.'
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={id_user}&text={messeg}"
+            requests.get(url).json()
+
+        await self.message.answer(f"Заявка № {order.id} переведена в статус исполнена.")
 
 
-    def redirection(self):
+class UserPanel(object):
 
-        if self.text == 'Подать заявку':
-            UserPanel.user.adding_order = True
-            UserPanel(UserPanel.user, UserPanel.bot, UserPanel.message).date_applications()
-        elif self.text == 'Отменить заявку':
-            UserPanel(UserPanel.user, UserPanel.bot, UserPanel.message).cancellation_application()
-        elif self.text == 'Просмотреть мои заявки':
-            UserPanel(UserPanel.user, UserPanel.bot, UserPanel.message).viewing_application()
-        elif self.text == 'Перенос заявки':
-            UserPanel(UserPanel.user, UserPanel.bot, UserPanel.message).transfer_application()
+    def __init__(self, callback=None, message=None, user=None):
+        self.callback = callback
+        self.message = message
+        self.user = user
 
+    async def date_applications(self, state):
+        """запись услуги"""
+        await state.set_state(Form.calendar_1)
+        min_date = datetime.date.today()
+        max_date = "{:%Y-%m-%d}".format(datetime.datetime.strptime('31.12.2030', '%d.%m.%Y'))
+        await self.callback.message.answer('Укажите дату: ',
+                                           reply_markup=await (
+                                               await get_calendar(self.callback, min_date, max_date)).start_calendar())
+
+    async def get_day_and_month(self, callback_data, state):
+        min_date = datetime.date.today()
+        max_date = "{:%Y-%m-%d}".format(datetime.datetime.strptime('31.12.2030', '%d.%m.%Y'))
+        calendar = await get_calendar(self.callback, min_date, max_date)
+        selected, date = await calendar.process_selection(self.callback, callback_data)
+        if selected and date:
+            await state.clear()
+            await self.callback.message.delete()
+            date_list = [date.strftime('%d'), date.strftime('%m'), date.strftime('%Y')]
+            self.user.date = f'{date_list[0]}.{date_list[1]}.{date_list[2]}'
+            time_user = ['09:00-10:00', '10:30-11:30', '12:00-13:00', '13:30-14:30', '15:00-16:00', '16:30-17:30',
+                         '18:00-19:00']
+
+            with Session(engin) as session:
+                day = session.exec(select(Calendar).where(Calendar.day == self.user.date)).one()
+                order = session.exec(select(Orders).where(Orders.order_date == self.user.date, Orders.active == True)).all()
+                if day.quantity_order <= len(order):
+                    await self.callback.message.answer("К сожалению на этот день нет свободных мест.")
+                elif len(order) == 0:
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+                    for time in time_user:
+                        keyboard.inline_keyboard.append([
+                            InlineKeyboardButton(text=time,
+                                                 callback_data=f'Время {time}')
+                        ])
+                    await self.callback.message.answer(
+                        "Выберите диапазон времени",
+                        reply_markup=keyboard,
+                    )
+                elif len(order) > 0 and len(order) < day.quantity_order:
+                    for i_order in order:
+                        if i_order.time in time_user:
+                            time_user.remove(i_order.time)
+                            continue
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+                    for time in time_user:
+                        keyboard.inline_keyboard.append([
+                            InlineKeyboardButton(text=time,
+                                                 callback_data=f'Время {time}')
+                        ])
+                    time_user = ['09:00-10:00', '10:30-11:30', '12:00-13:00', '13:30-14:30', '15:00-16:00', '16:30-17:30',
+                                 '18:00-19:00']
+                    await self.callback.message.answer(
+                        "Выберите диапазон времени",
+                        reply_markup=keyboard,
+                    )
+    async def check_number(self, state):
+        if re.match(r'^((8|\+7)[\- ]?)?(\(?\d{3}\)?[\- ]?)?[\d\- ]{7,10}$', self.message.text) and self.message.text.isnumeric():
+            self.user.number = self.message.text
+            await state.clear()
+            await state.set_state(Form.job)
+            await self.message.answer(
+                "Опишите необходимую работу.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+        else:
+            await self.message.answer(
+                "Номер телефон определне не верно, повторите ввод",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+
+    async def work_record(self, state):
+        await state.clear()
+        date = datetime.datetime.now()
+        with Session(engin) as session:
+            add_useer = Orders(user_id=self.user.user_id_db,
+                               creation_date=date,
+                               job=self.message.text,
+                               active=True,
+                               number_phone=self.user.number,
+                               refusal=False,
+                               order_date=self.user.date,
+                               time=self.user.time)
+            session.add(add_useer)
+            session.commit()
+
+        publicity(None, self.message.text, self.user.date, self.user.number, time=self.user.time, add=True)
+        await self.message.answer("Заявка принята, мастер свяжется с вами в ближайшее время.")
+
+    async def get_application_id(self, state):
+        with Session(engin) as session:
+            order = session.exec(select(Orders).where(Orders.user_id == self.user.user_id_db, Orders.active == True)).all()
+            if len(order) > 0:
+                await state.set_state(Form.cancellation_order)
+                await self.callback.message.answer("Введите номер заявки для отмены.")
+                for i_order in order:
+                    await self.callback.message.answer(f"Номер заявки: {i_order.id},\nДата: {i_order.order_date},\nНеобходимая работа: {i_order.job}, \nЗаявленное время: {i_order.time}")
+            else:
+                await self.callback.message.answer("У вас нет актуальных заявок.")
+
+    async def cancellation_application(self, state):
+        await state.clear()
+        with Session(engin) as session:
+            cancellation = session.exec(select(Orders).where(Orders.id == self.message.text)).one()
+            cancellation.active = False
+            session.add(cancellation)
+            session.commit()
+            session.refresh(cancellation)
+            publicity(cancellation.id, cancellation.job, cancellation.order_date, cancellation.number_phone, cancellation=True)
+            await self.message.answer("Заявка отменена.")
+
+    async def transfer_application(self, state):
+        with Session(engin) as session:
+            order = session.exec(select(Orders).where(Orders.user_id == self.user.user_id_db, Orders.active == True)).all()
+            if len(order) > 0:
+                for i_order in order:
+                    await self.callback.message.answer(
+                        f"Номер заявки: {i_order.id},\nДата: {i_order.order_date},\nНеобходимая работа: {i_order.job}, \nЗаявленное время: {i_order.time}")
+                    await state.set_state(Form.transfer)
+                    await self.callback.message.answer(
+                        "Введите номер заявки необходимую перенести",
+                        reply_markup=ReplyKeyboardRemove(),
+                    )
+            else:
+                await self.callback.message.answer("У вас нет актуальных заявок.")
+
+    async def date_selection(self, state):
+        self.user.order_id = self.message.text
+        await state.clear()
+        await state.set_state(Form.calendar_2)
+        min_date = datetime.date.today()
+        max_date = "{:%Y-%m-%d}".format(datetime.datetime.strptime('31.12.2030', '%d.%m.%Y'))
+        await self.message.answer('Укажите дату: ',
+                                           reply_markup=await (
+                                               await get_calendar(self.callback, min_date, max_date)).start_calendar())
+
+    async def current_applications(self):
+            with Session(engin) as session:
+                order = session.exec(select(Orders).where(Orders.user_id == self.user.user_id_db, Orders.active == True)).all()
+                if len(order) > 0:
+                    await self.callback.message.answer("Введите номер заявки для отмены.")
+                    for i_order in order:
+                        await self.callback.message.answer(
+                            f"Номер заявки: {i_order.id},\nДата: {i_order.order_date},\nНеобходимая работа: {i_order.job}, \nЗаявленное время: {i_order.time}")
+                else:
+                    await self.callback.message.answer("У вас нет актуальных заявок.")
+
+    async def transfer_time(self, callback_data, state):
+        min_date = datetime.date.today()
+        max_date = "{:%Y-%m-%d}".format(datetime.datetime.strptime('31.12.2030', '%d.%m.%Y'))
+        calendar = await get_calendar(self.callback, min_date, max_date)
+        selected, date = await calendar.process_selection(self.callback, callback_data)
+        if selected and date:
+            await state.clear()
+            await self.callback.message.delete()
+            date_list = [date.strftime('%d'), date.strftime('%m'), date.strftime('%Y')]
+            self.user.date = f'{date_list[0]}.{date_list[1]}.{date_list[2]}'
+            time_user = ['09:00-10:00', '10:30-11:30', '12:00-13:00', '13:30-14:30', '15:00-16:00', '16:30-17:30',
+                         '18:00-19:00']
+
+            with Session(engin) as session:
+                day = session.exec(select(Calendar).where(Calendar.day == self.user.date)).one()
+                order = session.exec(
+                    select(Orders).where(Orders.order_date == self.user.date, Orders.active == True)).all()
+                if day.quantity_order <= len(order):
+                    await self.callback.message.answer("К сожалению на этот день нет свободных мест.")
+                elif len(order) == 0:
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+                    for time in time_user:
+                        keyboard.inline_keyboard.append([
+                            InlineKeyboardButton(text=time,
+                                                 callback_data=f'Перенос {time}')
+                        ])
+                    await self.callback.message.answer(
+                        "Выберите диапазон времени",
+                        reply_markup=keyboard,
+                    )
+                elif len(order) > 0 and len(order) < day.quantity_order:
+                    for i_order in order:
+                        if i_order.time in time_user:
+                            time_user.remove(i_order.time)
+                            continue
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+                    for time in time_user:
+                        keyboard.inline_keyboard.append([
+                            InlineKeyboardButton(text=time,
+                                                 callback_data=f'Перенос {time}')
+                        ])
+                    time_user = ['09:00-10:00', '10:30-11:30', '12:00-13:00', '13:30-14:30', '15:00-16:00',
+                                 '16:30-17:30', '18:00-19:00']
+                    await self.callback.message.answer(
+                        "Выберите диапазон времени",
+                        reply_markup=keyboard,
+                    )
+
+    async def completion_transfer(self):
+        with Session(engin) as session:
+            order = session.exec(select(Orders).where(Orders.id == self.user.order_id)).one()
+            date = order.order_date
+            time = order.time
+            order.order_date = self.user.date
+            order.time = self.user.time
+            session.add(order)
+            session.commit()
+            session.refresh(order)
+            publicity(None, order.job, date, order.number_phone, new_date=self.user.date, time=time, new_time=self.user.time,  transfer=True)
+            await self.callback.message.answer("Заявка перенесена.")
 
