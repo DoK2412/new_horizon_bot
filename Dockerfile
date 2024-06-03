@@ -8,4 +8,4 @@ RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt --root-user-a
 
 COPY ./ /code/
 
-CMD ["python", "./app.py", "--host", "0.0.0.0", "--port", "8083"]
+CMD ["python", "./add.py", "--host", "0.0.0.0", "--port", "8083"]
