@@ -373,7 +373,7 @@ async def write_to_transfer_db(message: Message, state: FSMContext):
 
 
 async def main():
-    bot = Bot(token=bot_token_test, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = Bot(token=bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
