@@ -62,8 +62,8 @@ async def start_bot_worc(message):
             [
                 InlineKeyboardButton(text='Просмотр заявок',
                                      callback_data='Просмотр заявок'),
-                InlineKeyboardButton(text='Изменить количество заявок',
-                                     callback_data='Изменить количество заявок')
+                InlineKeyboardButton(text='Подать заявку',
+                                     callback_data='Подать заявку')
             ],
             [
                 InlineKeyboardButton(text='Статистика работ',
@@ -85,8 +85,10 @@ async def start_bot_worc(message):
             ],
             [
                 InlineKeyboardButton(text='Изменить права',
-                                     callback_data='Изменить права')
-            ]
+                                     callback_data='Изменить права'),
+                InlineKeyboardButton(text='Изменить количество заявок',
+                                     callback_data='Изменить количество заявок')
+            ],
         ])
         await message.answer('Добро пожаловать в админ меню.', reply_markup=keyboard)
 
@@ -371,7 +373,7 @@ async def write_to_transfer_db(message: Message, state: FSMContext):
 
 
 async def main():
-    bot = Bot(token=bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = Bot(token=bot_token_test, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
