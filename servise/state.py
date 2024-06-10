@@ -2,7 +2,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 
 class Form(StatesGroup):
-    number = State()                        # состояние получения номера телефона юзер
+    hotel = State()                        # состояние получения номера телефона юзер
     job = State()                           # состояние получения необходимой работы юзер
     cancellation_order = State()            # состояние отмены заявки юзер
     transfer = State()                      # состояние переноса заявки юзер
@@ -21,5 +21,5 @@ class Form(StatesGroup):
     calendar_7 = State()                    # состояние для выбора дня переноса заявки
     completed_application = State()         # состояние для id выполненой заявки
     amount = State()                        # смостояние для получения суммы за работу
-
-
+    photo = State()                         # состояние для получения изображений
+    video = State()                         # состояние для получения фидео

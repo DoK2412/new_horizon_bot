@@ -12,10 +12,12 @@ from aiogram.types import ReplyKeyboardRemove, \
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
 from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from aiogram.enums import ParseMode, ContentType
 from aiogram import F
 from aiogram.fsm.context import FSMContext
 from aiogram_calendar import SimpleCalendarCallback
+from aiogram.types import InputFile
+
 
 from servise.state import Form
 
@@ -123,15 +125,92 @@ async def receiving_note(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.delete()
     user = User.get_user(callback.message.chat.id)
     user.time = callback.data[6:]
-    await state.set_state(Form.number)
+    await state.set_state(Form.hotel)
     await callback.message.answer(
-        "Введите Ваш номер телефона в формате 89999666229",
+        "Введите название отеля",
         reply_markup=ReplyKeyboardRemove(),
     )
 
 
-@dp.message(Form.number)
-async def number(message: Message, state: FSMContext):
+@dp.callback_query(F.data == "Пропустить")
+async def skip(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(Form.job)
+    await callback.message.answer(
+        "Опишите необходимую работу.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+
+@dp.callback_query(F.data == "Фото")
+async def skip(callback: types.CallbackQuery,  state: FSMContext):
+    await callback.message.delete()
+    await state.set_state(Form.photo)
+    await callback.message.answer(
+        "Загрузите одну или несколько фотографий.")
+
+
+@dp.message(Form.photo)
+async def echo_photo_message(message: Message, state: FSMContext, bot: Bot):
+    user = User.get_user(message.chat.id)
+    if message.photo is not None:
+
+        # Получаем список фотографий в сообщении
+        photos = message.photo
+
+        # Перебираем фотографии и обрабатываем их
+        for photo in photos:
+            if message.photo[-1].file_id in user.list_photo:
+                continue
+            else:
+                user.list_photo.append(message.photo[-1].file_id)
+        await state.set_state(Form.job)
+        if user.switch is False:
+            user.switch = True
+            await message.answer(
+                "Опишите необходимую работу.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+    else:
+        await message.answer(
+            "Вы прислали не фото. Повторите отправку.")
+
+
+@dp.callback_query(F.data == "Видео")
+async def video(callback: types.CallbackQuery,  state: FSMContext):
+    await callback.message.delete()
+    await state.set_state(Form.video)
+    await callback.message.answer(
+        "Загрузите одно или несколько видео.")
+
+
+@dp.message(Form.video)
+async def echo_video_message(message: Message, state: FSMContext):
+    user = User.get_user(message.chat.id)
+    if message.video is not None:
+        # Получаем список фотографий в сообщении
+        videos = message.video
+
+        # Перебираем фотографии и обрабатываем их
+        for video in videos:
+            if message.video.file_id in user.list_video:
+                continue
+            else:
+                user.list_video.append(message.video.file_id)
+
+        await state.set_state(Form.job)
+        if user.switch is False:
+            user.switch = True
+            await message.answer(
+                "Опишите необходимую работу.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+    else:
+        await message.answer(
+            "Вы прислали не видео. Повторите отправку.")
+
+
+@dp.message(Form.hotel)
+async def hotel(message: Message, state: FSMContext):
     await message.delete()
     user = User.get_user(message.chat.id)
     await UserPanel(message=message, user=user).check_number(state)
@@ -141,6 +220,7 @@ async def number(message: Message, state: FSMContext):
 async def job(message: Message, state: FSMContext):
     await message.delete()
     user = User.get_user(message.chat.id)
+    user.switch = False
     await UserPanel(message=message, user=user).work_record(state)
 
 
@@ -160,13 +240,6 @@ async def cancellation_order(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "Перенос заявки")
 async def transfer(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.delete()
-    user = User.get_user(callback.message.chat.id)
-    await UserPanel(callback=callback, user=user).transfer_application(state)
-
-
-@dp.callback_query(F.data == "Перенос заявки")
-async def my_applications(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.delete()
     user = User.get_user(callback.message.chat.id)
     await UserPanel(callback=callback, user=user).transfer_application(state)

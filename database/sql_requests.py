@@ -31,10 +31,12 @@ class Orders(SQLModel, table=True):
     price: str
     refusal: bool
     rejection_reason: str
-    number_phone: str
+    hotel: str
     order_date: str
     time: str
     closing_date: datetime
+    photo: str
+    video: str
 
 
 class Notebook(SQLModel, table=True):

@@ -41,7 +41,7 @@ async def ending_calendar(callback, callback_data):
         return date
 
 
-def publicity(id, job, date, number_phone, new_date=None, time=None, new_time=None, cancellation=False, add=False, transfer=False):
+def publicity(id, job, date, hotel, new_date=None, time=None, new_time=None, cancellation=False, add=False, transfer=False):
     """отправка сообщение админам"""
     id_admin = list()
 
@@ -50,11 +50,11 @@ def publicity(id, job, date, number_phone, new_date=None, time=None, new_time=No
         for i_admin in admin:
             id_admin.append(i_admin.telegram_id)
     if cancellation:
-        messeg = f'Заявка №: {str(id)} отменена заказчиком.\n\nСведения о заявке:\n\nЗаявка на : {date},\nНеобходимая работа: {job}, \nНомер заказчика: {str(number_phone)}'
+        messeg = f'Заявка №: {str(id)} отменена заказчиком.\n\nСведения о заявке:\n\nЗаявка на : {date},\nНеобходимая работа: {job}, \nОтель: {str(hotel)}'
     if add:
-        messeg = f'Создана новая заявка на: {date}.\n\nСведения о заявке:\n\nНеобходимая работа: {job},\nЖелаемое время: {time},\nНомер заказчика: {str(number_phone)}'
+        messeg = f'Создана новая заявка на: {date}.\n\nСведения о заявке:\n\nНеобходимая работа: {job},\nЖелаемое время: {time},\nОтель: {str(hotel)}'
     if transfer:
-        messeg = f'Заказчик перенёс заявку.\n\nСведения о заявке:\n\nПеренесено с {date}, {time} на {new_date} {new_time},\nНеобходимая работа: {job},\nНомер заказчика: {str(number_phone)}'
+        messeg = f'Заказчик перенёс заявку.\n\nСведения о заявке:\n\nПеренесено с {date}, {time} на {new_date} {new_time},\nНеобходимая работа: {job},\nОтель: {str(hotel)}'
 
     for i_id in id_admin:
         url = f"https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={i_id}&text={messeg}"
@@ -109,19 +109,28 @@ class AdminPanel(object):
             await self.callback.message.answer("Нет активных заявок.")
         else:
             dict_orders = dict()
+
             for order in orders:
                 if order.order_date in dict_orders:
-                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.number_phone])
+                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.hotel, {"video": order.video}, {"photo": order.photo}])
                 else:
                     dict_orders[order.order_date] = list()
-                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.number_phone])
+                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.hotel, {"video": order.video}, {"photo": order.photo}])
+
             dict_orders = dict(sorted(dict_orders.items()))
 
             for key_order, values_order in dict_orders.items():
                 values_order.sort(key=lambda x: x[0])
                 await self.callback.message.answer(f"~~===Заявки на {key_order}===~~")
                 for i in values_order:
-                    await self.callback.message.answer(f"Заявка №: {i[0]},\nВид работ: {i[2]},\nВремя: {i[1]}\nНомер заказчика: {i[3]}.")
+                    await self.callback.message.answer(f"Заявка №: {i[0]},\nВид работ: {i[2]},\nВремя: {i[1]}\nНазвание отеля: {i[3]}.")
+                    if i[4]['video'] is not None and len(i[4]['video']) > 2:
+                        for video in i[4]['video'][1:-1].split(','):
+                            await self.callback.message.answer_video(video)
+
+                    if i[5]['photo'] is not None and len(i[5]['photo']) > 2:
+                        for photo in i[5]['photo'][1:-1].split(','):
+                            await self.callback.message.answer_photo(photo)
 
     async def change_number_orders(self, state):
         """отправляем календарь пользователю"""
@@ -201,17 +210,17 @@ class AdminPanel(object):
             dict_orders = dict()
             for order in orders:
                 if order.order_date in dict_orders:
-                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.number_phone])
+                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.hotel])
                 else:
                     dict_orders[order.order_date] = list()
-                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.number_phone])
+                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.hotel])
             dict_orders = dict(sorted(dict_orders.items()))
 
             for key_order, values_order in dict_orders.items():
                 values_order.sort(key=lambda x: x[0])
                 await self.callback.message.answer(f"~~===Заявки на {key_order}===~~")
                 for i in values_order:
-                    await self.callback.message.answer(f"Заявка №: {i[0]},\nВид работ: {i[2]},\nВремя: {i[1]}\nНомер заказчика: {i[3]}.")
+                    await self.callback.message.answer(f"Заявка №: {i[0]},\nВид работ: {i[2]},\nВремя: {i[1]}\nНазвание отеля: {i[3]}.")
             await state.set_state(Form.cancellation_application)
             await self.callback.message.answer(
                 "Введите номер заявки для отмены.",
@@ -331,10 +340,10 @@ class AdminPanel(object):
             dict_orders = dict()
             for order in orders:
                 if order.order_date in dict_orders:
-                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.number_phone])
+                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.hotel])
                 else:
                     dict_orders[order.order_date] = list()
-                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.number_phone])
+                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.hotel])
             dict_orders = dict(sorted(dict_orders.items()))
 
             for key_order, values_order in dict_orders.items():
@@ -342,7 +351,7 @@ class AdminPanel(object):
                 await self.callback.message.answer(f"~~===Заявки на {key_order}===~~")
                 for i in values_order:
                     await self.callback.message.answer(
-                        f"Заявка №: {i[0]},\nВид работ: {i[2]},\nВремя: {i[1]}\nНомер заказчика: {i[3]}.")
+                        f"Заявка №: {i[0]},\nВид работ: {i[2]},\nВремя: {i[1]}\nНазвание отеля: {i[3]}.")
             await AdminPanel(callback=self.callback, user=self.user).date_transfer(state)
 
     async def date_transfer(self, state):
@@ -430,10 +439,10 @@ class AdminPanel(object):
             dict_orders = dict()
             for order in orders:
                 if order.order_date in dict_orders:
-                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.number_phone])
+                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.hotel])
                 else:
                     dict_orders[order.order_date] = list()
-                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.number_phone])
+                    dict_orders[order.order_date].append([order.id, order.time, order.job, order.hotel])
             dict_orders = dict(sorted(dict_orders.items()))
 
             for key_order, values_order in dict_orders.items():
@@ -441,7 +450,7 @@ class AdminPanel(object):
                 await self.callback.message.answer(f"~~===Заявки на {key_order}===~~")
                 for i in values_order:
                     await self.callback.message.answer(
-                        f"Заявка №: {i[0]},\nВид работ: {i[2]},\nВремя: {i[1]}\nНомер заказчика: {i[3]}.")
+                        f"Заявка №: {i[0]},\nВид работ: {i[2]},\nВремя: {i[1]}\nНазвание отеля: {i[3]}.")
             await state.set_state(Form.completed_application)
             await self.callback.message.answer("Введите id выполенной заявки")
 
@@ -533,20 +542,25 @@ class UserPanel(object):
                         "Выберите диапазон времени",
                         reply_markup=keyboard,
                     )
+
     async def check_number(self, state):
-        if re.match(r'^((8|\+7)[\- ]?)?(\(?\d{3}\)?[\- ]?)?[\d\- ]{7,10}$', self.message.text) and self.message.text.isnumeric():
-            self.user.number = self.message.text
-            await state.clear()
-            await state.set_state(Form.job)
-            await self.message.answer(
-                "Опишите необходимую работу.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-        else:
-            await self.message.answer(
-                "Номер телефон определне не верно, повторите ввод",
-                reply_markup=ReplyKeyboardRemove(),
-            )
+        self.user.hotel = self.message.text
+        await state.clear()
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text='Фото',
+                                     callback_data='Фото')
+            ],
+            [
+                InlineKeyboardButton(text='Видео',
+                                     callback_data='Видео')
+            ],
+            [
+                InlineKeyboardButton(text='Пропустить',
+                                     callback_data='Пропустить')
+            ]
+        ])
+        await self.message.answer('Прикрепите фото или видео', reply_markup=keyboard)
 
     async def work_record(self, state):
         await state.clear()
@@ -556,14 +570,16 @@ class UserPanel(object):
                                creation_date=date,
                                job=self.message.text,
                                active=True,
-                               number_phone=self.user.number,
+                               hotel=self.user.hotel,
                                refusal=False,
                                order_date=self.user.date,
-                               time=self.user.time)
+                               time=self.user.time,
+                               photo=self.user.list_photo,
+                               video=self.user.list_video)
             session.add(add_useer)
             session.commit()
 
-        publicity(None, self.message.text, self.user.date, self.user.number, time=self.user.time, add=True)
+        publicity(None, self.message.text, self.user.date, self.user.hotel, time=self.user.time, add=True)
         await self.message.answer("Заявка принята, мастер свяжется с вами в ближайшее время.")
 
     async def get_application_id(self, state):
@@ -573,7 +589,7 @@ class UserPanel(object):
                 await state.set_state(Form.cancellation_order)
                 await self.callback.message.answer("Введите номер заявки для отмены.")
                 for i_order in order:
-                    await self.callback.message.answer(f"Номер заявки: {i_order.id},\nДата: {i_order.order_date},\nНеобходимая работа: {i_order.job}, \nЗаявленное время: {i_order.time}")
+                    await self.callback.message.answer(f"Номер заявки: {i_order.id},\nДата: {i_order.order_date},\nНаименование отеля: {i_order.hotel}\nНеобходимая работа: {i_order.job}, \nЗаявленное время: {i_order.time}")
             else:
                 await self.callback.message.answer("У вас нет актуальных заявок.")
 
@@ -585,7 +601,7 @@ class UserPanel(object):
             session.add(cancellation)
             session.commit()
             session.refresh(cancellation)
-            publicity(cancellation.id, cancellation.job, cancellation.order_date, cancellation.number_phone, cancellation=True)
+            publicity(cancellation.id, cancellation.job, cancellation.order_date, cancellation.hotel, cancellation=True)
             await self.message.answer("Заявка отменена.")
 
     async def transfer_application(self, state):
@@ -594,7 +610,7 @@ class UserPanel(object):
             if len(order) > 0:
                 for i_order in order:
                     await self.callback.message.answer(
-                        f"Номер заявки: {i_order.id},\nДата: {i_order.order_date},\nНеобходимая работа: {i_order.job}, \nЗаявленное время: {i_order.time}")
+                        f"Номер заявки: {i_order.id},\nДата: {i_order.order_date},\nНаименование отеля: {i_order.hotel}\nНеобходимая работа: {i_order.job}, \nЗаявленное время: {i_order.time}")
                     await state.set_state(Form.transfer)
                     await self.callback.message.answer(
                         "Введите номер заявки необходимую перенести",
@@ -617,10 +633,17 @@ class UserPanel(object):
             with Session(engin) as session:
                 order = session.exec(select(Orders).where(Orders.user_id == self.user.user_id_db, Orders.active == True)).all()
                 if len(order) > 0:
-                    await self.callback.message.answer("Введите номер заявки для отмены.")
+                    await self.callback.message.answer("Список Ваших заявок.")
                     for i_order in order:
+                        print(i_order)
                         await self.callback.message.answer(
-                            f"Номер заявки: {i_order.id},\nДата: {i_order.order_date},\nНеобходимая работа: {i_order.job}, \nЗаявленное время: {i_order.time}")
+                            f"Номер заявки: {i_order.id},\nДата: {i_order.order_date},\nНаименование отеля: {i_order.hotel},\nНеобходимая работа: {i_order.job}, \nЗаявленное время: {i_order.time}")
+                        if i_order.video is not None and len(i_order.video) > 2:
+                            for video in i_order.video[1:-1].split(','):
+                                await self.callback.message.answer_video(video)
+                        if i_order.photo is not None and len(i_order.photo) > 2:
+                            for photo in i_order.photo[1:-1].split(','):
+                                await self.callback.message.answer_photo(photo)
                 else:
                     await self.callback.message.answer("У вас нет актуальных заявок.")
 
@@ -682,6 +705,6 @@ class UserPanel(object):
             session.add(order)
             session.commit()
             session.refresh(order)
-            publicity(None, order.job, date, order.number_phone, new_date=self.user.date, time=time, new_time=self.user.time,  transfer=True)
+            publicity(None, order.job, date, order.hotel, new_date=self.user.date, time=time, new_time=self.user.time,  transfer=True)
             await self.callback.message.answer("Заявка перенесена.")
 
