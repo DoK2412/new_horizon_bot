@@ -165,6 +165,7 @@ async def echo_photo_message(message: Message, state: FSMContext, bot: Bot):
                 user.list_photo.append(message.photo[-1].file_id)
         await state.set_state(Form.job)
         if user.switch is False:
+            user.list_video = list()
             user.switch = True
             await message.answer(
                 "Опишите необходимую работу.",
@@ -200,6 +201,7 @@ async def echo_video_message(message: Message, state: FSMContext):
         await state.set_state(Form.job)
         if user.switch is False:
             user.switch = True
+            user.list_photo = list()
             await message.answer(
                 "Опишите необходимую работу.",
                 reply_markup=ReplyKeyboardRemove(),
